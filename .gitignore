@@ -7,3 +7,6 @@
 !vercel.json
 !.vercelignore
 !check-progress.mjs
+
+.vercel
+.env*
