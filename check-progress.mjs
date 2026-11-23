@@ -6,7 +6,9 @@ const elements=new Map();
 function element(){return {textContent:'',value:'35',disabled:false,dataset:{},style:{},classList:{toggle(){}},attrs:{},setAttribute(k,v){this.attrs[k]=v;},addEventListener(){},blur(){}};}
 const chips=[1,2,3].map(n=>Object.assign(element(),{dataset:{level:String(n)}}));
 const sandbox={console,Math,document:{querySelector(s){if(!elements.has(s))elements.set(s,element());return elements.get(s);},querySelectorAll(){return chips;},addEventListener(){},activeElement:{tagName:'BODY'}},window:{addEventListener(){}},setInterval(){},requestAnimationFrame(){}};
-sandbox.document.querySelector('#game').getContext=()=>({});
+const drawingCalls=[];
+const context=new Proxy({}, {get(target,key){if(key in target)return target[key];return (...args)=>{drawingCalls.push({key,args});if(key==='createLinearGradient')return {addColorStop(){}};};}});
+sandbox.document.querySelector('#game').getContext=()=>context;
 vm.createContext(sandbox);vm.runInContext(html.match(/<script>([\s\S]*?)<\/script>/)[1],sandbox);
 const run=code=>vm.runInContext(code,sandbox);
 const clear=()=>run("state.obstacles=[{type:'rock',x:40,y:263,w:34,h:27,hit:false,passed:false}];step();");
@@ -23,8 +25,22 @@ assert.equal(run('state.finished'),true);assert.equal(run('state.score'),6000);a
 assert.ok(run('state.celebration'));assert.equal(elements.get('#stageProgress').attrs['aria-valuenow'],'100');assert.equal(elements.get('#progressFill').style.width,'100%');
 assert.ok(chips.every(chip=>chip.textContent.endsWith('100%')));
 const distance=run('state.distance');run('step();');assert.equal(run('state.distance'),distance);assert.ok(run('state.celebration.particles.length')>0);
-run('pause();step();');assert.equal(run('state.celebration.age'),1);run('pause();for(let i=0;i<269;i++)step();');
-assert.equal(run('state.phase'),'won');assert.equal(run('state.celebration'),null);assert.equal(elements.get('#pause').disabled,true);
+run('pause();step();');assert.equal(run('state.celebration.age'),1);run('pause();for(let i=1;i<FANFARE_FRAMES;i++)step();');
+assert.equal(run('state.phase'),'won');assert.equal(run('state.celebration'),null);assert.equal(elements.get('#pause').disabled,false);
+assert.equal(elements.get('#pause').textContent,'춤 잠깐 쉬기');
+run('frame(1000);frame(1017);');
+assert.ok(run('state.danceTick')>0);
+assert.ok(drawingCalls.some(call=>call.key==='scale'&&call.args[0]===2.4));
+const pose=run('JSON.stringify(dancePose())'),danceTime=run('state.danceTick');
+run('pause();frame(1034);');assert.equal(run('state.partyPaused'),true);assert.equal(run('state.danceTick'),danceTime);
+run('pause();frame(1051);');assert.notEqual(run('JSON.stringify(dancePose())'),pose);
+run('document.hidden=true;frame(1068);');const hiddenTime=run('state.danceTick');run('frame(1085);');assert.equal(run('state.danceTick'),hiddenTime);run('document.hidden=false;');
+run(`globalThis.scheduledNotes=[];globalThis.originalNote=note;note=(...args)=>scheduledNotes.push(args);audio.context={currentTime:10};audio.music={gain:{setTargetAtTime(){}}};audio.next=10;audio.fxUntil=0;audio.index=0;musicTick();`);
+assert.ok(run('scheduledNotes.length')>=6,'party schedules melody, bass, chord and rhythm');
+assert.equal(run('scheduledNotes[0][0]'),72);
+run('scheduledNotes=[];audio.enabled=false;musicTick();');assert.equal(run('scheduledNotes.length'),0);
+run('audio.enabled=true;pause();musicTick();');assert.equal(run('scheduledNotes.length'),0);
+run('note=originalNote;audio.context=null;');
 run('step();');assert.equal(run('state.score'),6000);
 run('start();');assert.equal(run('state.level'),1);assert.equal(run('state.stageCleared'),0);assert.equal(run('state.lives'),3);assert.equal(run('state.finished'),false);assert.equal(run('state.progress.join()'),'0,0,0');
 run("state.obstacles=[{type:'rock',x:114,y:263,w:34,h:27,hit:false,passed:false}];step();");assert.equal(run('state.lives'),2);assert.equal(run('state.stageCleared'),0);
@@ -33,4 +49,4 @@ for(const type of ['cactus','rock','mushroom','double','bird','drone']){
  run(`{state.y=0;state.duck=false;const def=obstacleKinds['${type}'];globalThis.testObstacle={x:114,y:def.air?GROUND-('${type}'==='drone'?67:60):GROUND-def.h,w:def.w,h:def.h};}`);
  assert.equal(run('overlaps(playerBox(),testObstacle)'),true);run(air?'state.duck=true;':'state.y=100;');assert.equal(run('overlaps(playerBox(),testObstacle)'),false);
 }
-console.log('Passed: 20 successful obstacles per stage, no early transitions or fanfare, 0–100% progress, 3 hearts, final celebration, pause/resume, victory, reset and six obstacle types.');
+console.log('Passed: three stage goals, six obstacle types, three hearts, fanfare followed by dancing, party music layers, mute, dance pause, hidden-tab pause and restart.');

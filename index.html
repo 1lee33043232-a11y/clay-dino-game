@@ -13,21 +13,63 @@
 'use strict';
 const $=s=>document.querySelector(s),canvas=$('#game'),ctx=canvas.getContext('2d'),GROUND=290;
 const STAGE_GOAL=20;
+const FANFARE_FRAMES=228;
 const levels=[null,{name:'산책',speed:5,gap:650,spread:200,bird:.25},{name:'모험',speed:6.5,gap:590,spread:180,bird:.35},{name:'도전',speed:8,gap:530,spread:160,bird:.45}];
-const state={phase:'ready',level:1,progress:[0,0,0],finished:false,stageCleared:0,stageSpawns:0,lastObstacle:null,celebration:null,speed:5,score:0,cleared:0,lives:3,y:0,vy:0,duck:false,obstacles:[],spawn:85,tick:0,distance:0,invincible:0,pop:null};
-const audio={context:null,master:null,music:null,enabled:true,next:0,index:0,fxUntil:0};
+const state={danceTick:0,partyPaused:false,phase:'ready',level:1,progress:[0,0,0],finished:false,stageCleared:0,stageSpawns:0,lastObstacle:null,celebration:null,speed:5,score:0,cleared:0,lives:3,y:0,vy:0,duck:false,obstacles:[],spawn:85,tick:0,distance:0,invincible:0,pop:null};
+const audio={context:null,master:null,music:null,enabled:true,next:0,index:0,fxUntil:0,voices:new Set()};
 const tune=[72,76,79,76,74,77,81,77,76,79,84,79,77,74,71,67,72,76,79,84,81,77,74,77,79,76,72,76,74,71,67,71];
 function initAudio(){try{if(!audio.context){const C=window.AudioContext||window.webkitAudioContext;if(!C)return;audio.context=new C();audio.master=audio.context.createGain();audio.music=audio.context.createGain();audio.music.connect(audio.master);audio.master.connect(audio.context.destination);}audio.context.resume().catch(()=>{});setVolume();}catch{notify('소리를 사용할 수 없어도 게임은 계속 즐길 수 있어요!');}}
 function setVolume(){if(audio.master)audio.master.gain.setTargetAtTime(audio.enabled?Number($('#volume').value)/100:0,audio.context.currentTime,.02);}
-function note(midi,time,length=.14,type='triangle',volume=.18,music=false){if(!audio.context||!audio.enabled)return;const o=audio.context.createOscillator(),g=audio.context.createGain();o.type=type;o.frequency.setValueAtTime(440*2**((midi-69)/12),time);g.gain.setValueAtTime(0,time);g.gain.linearRampToValueAtTime(volume,time+.008);g.gain.exponentialRampToValueAtTime(.001,time+length);o.connect(g);g.connect(music?audio.music:audio.master);o.start(time);o.stop(time+length+.02);o.onended=()=>{o.disconnect();g.disconnect();};}
+function note(midi,time,length=.14,type='triangle',volume=.18,music=false){if(!audio.context||!audio.enabled)return;const o=audio.context.createOscillator(),g=audio.context.createGain();o.type=type;o.frequency.setValueAtTime(440*2**((midi-69)/12),time);g.gain.setValueAtTime(0,time);g.gain.linearRampToValueAtTime(volume,time+.008);g.gain.exponentialRampToValueAtTime(.001,time+length);o.connect(g);g.connect(music?audio.music:audio.master);audio.voices.add(o);o.start(time);o.stop(time+length+.02);o.onended=()=>{audio.voices.delete(o);o.disconnect();g.disconnect();};}
 function effect(kind){if(!audio.context||!audio.enabled)return;const now=audio.context.currentTime;const notes=kind==='out'?[67,66,65,60,0,60,59,48]:kind==='hit'?[72,67,64,60,61,60]:kind==='point'?[79,84]:[67,79];const beat=kind==='out'?.19:kind==='hit'?.12:.07;audio.fxUntil=now+notes.length*beat;notes.forEach((n,i)=>{if(n)note(n,now+i*beat,beat*.92,kind==='hit'||kind==='out'?'sawtooth':'triangle',kind==='out'?.15:.12);});}
-setInterval(()=>{if(!audio.context)return;const now=audio.context.currentTime,active=state.phase==='playing'&&audio.enabled&&now>audio.fxUntil;audio.music.gain.setTargetAtTime(active?1:0,now,.03);if(!active){audio.next=now;return;}if(audio.next<now)audio.next=now;while(audio.next<now+.12){note(tune[audio.index%tune.length],audio.next,.13,'square',.055,true);if(audio.index%2===0)note([48,53,55,48][Math.floor(audio.index/8)%4],audio.next,.19,'triangle',.15,true);audio.index++;audio.next+=.21;}},50);
+// Original upbeat victory melody; generated locally with Web Audio.
+const partyTune=[72,76,79,84,79,76,74,79,77,81,84,86,84,81,79,77,76,79,84,88,86,84,79,76,74,77,81,86,84,79,76,72];
+const PARTY_BEAT=.19;
+function musicTick(){
+ if(!audio.context)return;
+ const now=audio.context.currentTime,party=state.phase==='won'&&!state.partyPaused;
+ const active=(party||(state.phase==='playing'&&!state.celebration))&&audio.enabled&&!document.hidden&&now>audio.fxUntil;
+ audio.music.gain.setTargetAtTime(active?1:0,now,.03);
+ if(!active){audio.next=now;return;}
+ if(audio.next<now)audio.next=now;
+ while(audio.next<now+.12){
+  const i=audio.index;
+  if(party){
+   note(partyTune[i%partyTune.length],audio.next,.15,'triangle',.16,true);
+   if(i%2===0)note([48,53,55,48][Math.floor(i/8)%4],audio.next,.22,'triangle',.18,true);
+   if(i%4===0)for(const pitch of [60,64,67])note(pitch+(Math.floor(i/8)%2?5:0),audio.next,.13,'triangle',.035,true);
+   note(i%4===0?36:i%4===2?50:94,audio.next,i%2===0?.085:.035,i%2===0?'sine':'square',i%2===0?.14:.018,true);
+   audio.next+=PARTY_BEAT;
+  }else{
+   note(tune[i%tune.length],audio.next,.13,'square',.055,true);
+   if(i%2===0)note([48,53,55,48][Math.floor(i/8)%4],audio.next,.19,'triangle',.15,true);
+   audio.next+=.21;
+  }
+  audio.index++;
+ }
+}
+function dancePose(){const angle=state.danceTick/(60*PARTY_BEAT*2)*Math.PI*2;return {angle,sway:Math.sin(angle)*.13,bounce:Math.abs(Math.sin(angle))*15,stride:Math.sin(angle)*4};}
+function drawVictoryStage(){
+ const t=state.danceTick;
+ ctx.save();
+ for(let i=0;i<2;i++){ctx.fillStyle=i?'#efd9f14d':'#fff4cd66';ctx.beginPath();ctx.moveTo(i?780:220,0);ctx.lineTo(i?630:420,GROUND);ctx.lineTo(i?360:660,GROUND);ctx.closePath();ctx.fill();}
+ puff(358,GROUND-4,284,29,'#d6c5ec',16);oval(500,GROUND+5,86,9,'#9c8bad33');
+ ctx.textAlign='center';ctx.fillStyle='#9972b5';ctx.font='bold 12px system-ui';ctx.fillText('ALL CLEAR · DINO DANCE PARTY',500,33);
+ ctx.font='bold 29px system-ui';ctx.fillText('3단계 완성! 공룡 댄스 타임!',500,70);
+ ctx.fillStyle='#aa91b4';ctx.font='14px system-ui';ctx.fillText(state.score+'점! '+(state.partyPaused?'잠깐 쉬었다가 다시 춤춰요':'음악에 맞춰 함께 흔들흔들 ♪'),500,96);
+ const colors=['#e39bb9','#b29ada','#88c6b1','#dcb665'];
+ for(let i=0;i<12;i++){const x=290+(i*79)%430,y=125+((i*37+t*.5)%160);ctx.save();ctx.translate(x,y);ctx.rotate(i+t*.025);ctx.fillStyle=colors[i%4];ctx.fillRect(-2,-4,4,8);ctx.restore();}
+ for(let i=0;i<4;i++){ctx.fillStyle=colors[i];ctx.font='bold '+(23+i%2*9)+'px system-ui';ctx.fillText(i%2?'♫':'♪',345+(i%2)*300+Math.sin(t*.04+i)*12,164+Math.floor(i/2)*75+Math.sin(t*.065+i)*9);}
+ ctx.restore();
+}
+
+setInterval(musicTick,50);
 function notify(text){$('#status').textContent=text;}
 function hud(){$('#score').textContent=state.score;$('#cleared').textContent=state.cleared;$('#lives').textContent='♥'.repeat(state.lives)+'♡'.repeat(3-state.lives);$('#lives').setAttribute('aria-label',`남은 기회 ${state.lives}번`);$('#duck').setAttribute('aria-pressed',String(state.duck));}
-function start(){initAudio();Object.assign(state,{phase:'playing',level:1,progress:[0,0,0],finished:false,speed:levels[1].speed,stageCleared:0,stageSpawns:0,lastObstacle:null,celebration:null,score:0,cleared:0,lives:3,y:0,vy:0,duck:false,obstacles:[],spawn:85,tick:0,distance:0,invincible:0,pop:null});audio.index=0;audio.next=audio.context?.currentTime||0;audio.fxUntil=0;accumulator=0;$('#start').textContent='처음부터 다시';$('#pause').disabled=false;$('#pause').textContent='잠깐 쉬기';notify(`${state.level}단계 출발! 선인장은 점프하고, 새가 오면 엎드려요!`);hud();levelHud();}
+function start(){initAudio();for(const voice of audio.voices){try{voice.stop();}catch{}}audio.voices.clear();Object.assign(state,{danceTick:0,partyPaused:false,phase:'playing',level:1,progress:[0,0,0],finished:false,speed:levels[1].speed,stageCleared:0,stageSpawns:0,lastObstacle:null,celebration:null,score:0,cleared:0,lives:3,y:0,vy:0,duck:false,obstacles:[],spawn:85,tick:0,distance:0,invincible:0,pop:null});audio.index=0;audio.next=audio.context?.currentTime||0;audio.fxUntil=0;accumulator=0;$('#start').textContent='처음부터 다시';$('#pause').disabled=false;$('#pause').textContent='잠깐 쉬기';notify(`${state.level}단계 출발! 선인장은 점프하고, 새가 오면 엎드려요!`);hud();levelHud();}
 function jump(){if(state.phase!=='playing'||state.y>0||state.duck)return;state.vy=13;effect('jump');}
 function duck(value){state.duck=value&&state.phase==='playing'&&state.y===0;hud();}
-function pause(){if(!['playing','paused'].includes(state.phase))return;state.phase=state.phase==='playing'?'paused':'playing';duck(false);accumulator=0;$('#pause').textContent=state.phase==='paused'?'계속 달리기':'잠깐 쉬기';notify(state.phase==='paused'?'잠깐 쉬는 중! ‘계속 달리기’를 누르면 출발해요.':'다시 출발! 할 수 있어요!');}
+function pause(){if(state.phase==='won'){state.partyPaused=!state.partyPaused;$('#pause').textContent=state.partyPaused?'다시 춤추기':'춤 잠깐 쉬기';notify(state.partyPaused?'댄스 타임 잠깐 쉬는 중!':'신나는 음악에 맞춰 다시 춤춰요!');return;}if(!['playing','paused'].includes(state.phase))return;state.phase=state.phase==='playing'?'paused':'playing';duck(false);accumulator=0;$('#pause').textContent=state.phase==='paused'?'계속 달리기':'잠깐 쉬기';notify(state.phase==='paused'?'잠깐 쉬는 중! ‘계속 달리기’를 누르면 출발해요.':'다시 출발! 할 수 있어요!');}
 function playerBox(){return {x:114,y:GROUND-state.y-(state.duck?25:54),w:state.duck?57:36,h:state.duck?25:54};}
 function overlaps(a,b){return a.x<b.x+b.w&&a.x+a.w>b.x&&a.y<b.y+b.h&&a.y+a.h>b.y;}
 function hit(o){o.hit=true;if(state.invincible)return;state.lives--;state.invincible=90;state.pop={text:'앗! 쿵!',color:'#c24c52',life:65};if(state.lives===0){state.phase='over';duck(false);$('#pause').disabled=true;notify(`세 번 쿵! 아웃이에요! ${state.score}점 획득. 공룡도 연습이 필요해요~ 다시 도전!`);effect('out');}else{notify(['','에헤헤~ 한 번만 더 조심! 기회가 1번 남았어요.','삐끗! 공룡 발이 꼬였네~ 기회가 2번 남았어요.'][state.lives]);effect('hit');}hud();}
@@ -42,10 +84,10 @@ function puff(x,y,w,h,color,r=20){ctx.save();ctx.shadowColor='#7f87912a';ctx.sha
 function shade(hex,n){return '#'+hex.slice(1).match(/../g).map(v=>Math.max(0,Math.min(255,parseInt(v,16)+n)).toString(16).padStart(2,'0')).join('');}
 function oval(x,y,rx,ry,color){ctx.fillStyle=color;ctx.beginPath();ctx.ellipse(x,y,rx,ry,0,0,Math.PI*2);ctx.fill();}
 function cloud(x,y){ctx.save();ctx.shadowColor='#acb9cc25';ctx.shadowBlur=8;ctx.shadowOffsetY=5;ctx.fillStyle='#ffffffdf';ctx.beginPath();ctx.roundRect(x,y,85,19,12);ctx.fill();ctx.beginPath();ctx.arc(x+27,y,20,0,Math.PI*2);ctx.arc(x+53,y-6,24,0,Math.PI*2);ctx.fill();ctx.restore();}
-function dino(){const x=104,top=GROUND-state.y-(state.duck?25:54);ctx.save();if(state.invincible&&Math.floor(state.tick/5)%2===0)ctx.globalAlpha=.3;
- oval(133,GROUND+6,37,6,'#7eaa9c25');
+function dino(){const dancing=state.phase==='won',pose=dancing?dancePose():null,x=104,top=GROUND-state.y-(state.duck?25:54);ctx.save();if(dancing){ctx.translate(500+Math.sin(pose.angle)*13,GROUND-8-pose.bounce);ctx.rotate(pose.sway);ctx.scale(2.4,2.4);ctx.translate(-133,-GROUND);}if(!dancing&&state.invincible&&Math.floor(state.tick/5)%2===0)ctx.globalAlpha=.3;
+ if(!dancing)oval(133,GROUND+6,37,6,'#7eaa9c25');
  if(state.duck){puff(x-12,top+5,33,13,'#9ed8c0',9);puff(x+1,top+5,56,21,'#9ed8c0',14);puff(x+42,top-2,34,24,'#ade4cc',11);puff(x+9,top+19,14,7,'#8bc6ae',4);puff(x+36,top+19,14,7,'#8bc6ae',4);oval(x+64,top+6,2.7,3.5,'#4c6861');oval(x+69,top+13,4,2.4,'#f0b5b4');}
- else{puff(x-12,top+24,31,14,'#9ed8c0',10);puff(x+1,top+18,40,33,'#9ed8c0',18);puff(x+21,top-6,39,33,'#ade4cc',14);puff(x+11,top+27,18,22,'#d3ecd6',10);const run=state.phase==='playing'&&!state.y?Math.sin(state.tick*.5)*3:0;puff(x+7,top+43,14,11+run,'#8ec9b1',6);puff(x+29,top+43,14,11-run,'#8ec9b1',6);puff(x+33,top+27,17,9,'#a8dcc7',5);oval(x+48,top+3,3,4,'#4c6861');oval(x+49,top+2,1,1.2,'#fff');oval(x+53,top+13,5,3,'#f0b5b4');ctx.strokeStyle='#678f7e';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x+54,top+12,7,.4,1.7);ctx.stroke();for(let i=0;i<3;i++)puff(x-3+i*3,top+15+i*7,8,8,'#c5b4e6',4);}
+ else{puff(x-12,top+24,31,14,'#9ed8c0',10);puff(x+1,top+18,40,33,'#9ed8c0',18);puff(x+21,top-6,39,33,'#ade4cc',14);puff(x+11,top+27,18,22,'#d3ecd6',10);const run=dancing?pose.stride:state.phase==='playing'&&!state.y?Math.sin(state.tick*.5)*3:0;puff(x+7,top+43,14,11+run,'#8ec9b1',6);puff(x+29,top+43,14,11-run,'#8ec9b1',6);if(dancing){ctx.save();ctx.translate(x+36,top+31);ctx.rotate(-1.1+Math.sin(pose.angle)*.8);puff(0,-4,23,9,'#a8dcc7',5);ctx.restore();ctx.save();ctx.translate(x+5,top+31);ctx.rotate(2.5-Math.sin(pose.angle)*.7);puff(0,-4,18,9,'#a8dcc7',5);ctx.restore();}else puff(x+33,top+27,17,9,'#a8dcc7',5);oval(x+48,top+3,3,4,'#4c6861');oval(x+49,top+2,1,1.2,'#fff');oval(x+53,top+13,5,3,'#f0b5b4');ctx.strokeStyle='#678f7e';ctx.lineWidth=1.5;ctx.beginPath();ctx.arc(x+54,top+12,7,.4,1.7);ctx.stroke();for(let i=0;i<3;i++)puff(x-3+i*3,top+15+i*7,8,8,'#c5b4e6',4);}
  ctx.restore();}
 // Scenery is deterministic and separate from obstacle physics.
 const sceneryPalettes=[
@@ -86,12 +128,12 @@ function drawScenery(){const theme=sceneryTheme(),d=state.distance;ctx.clearRect
 }
 
 function draw(){drawScenery();
- for(const o of state.obstacles)drawObstacle(o);dino();
+ for(const o of state.obstacles)drawObstacle(o);if(state.phase==='won')drawVictoryStage();dino();
  ctx.textAlign='center';if(state.pop){ctx.fillStyle=state.pop.color;ctx.font='bold 23px system-ui';ctx.fillText(state.pop.text,205,180-(65-state.pop.life)*.5);}
  drawCelebration();
- if(state.phase!=='playing'){puff(264,57,472,132,'#faf5ff',27);ctx.fillStyle='#a796bd';ctx.font='bold 10px system-ui';ctx.fillText(state.phase==='paused'?'TAKE A LITTLE BREAK':state.phase==='won'?'ALL STAGES COMPLETE':state.phase==='over'?'LET’S TRY AGAIN':'A LITTLE JUMP, A BIG ADVENTURE',500,86);ctx.fillStyle='#756384';ctx.font='bold 28px system-ui';ctx.fillText(state.phase==='won'?'모든 단계 100% 성공!':state.phase==='over'?'괜찮아, 한 번 더 폴짝!':state.phase==='paused'?'공룡도 잠깐 쉬어요':'준비됐나요, 공룡 친구?',500,123);ctx.fillStyle='#ab9ab5';ctx.font='15px system-ui';ctx.fillText(state.phase==='won'?`${state.score}점! 정말 멋진 모험이었어요!`:state.phase==='over'?`${state.score}점! 아래 버튼으로 다시 도전해요`:state.phase==='paused'?'‘계속 달리기’를 누르면 다시 출발해요':'아래 ‘게임 시작’을 누르고 모험을 떠나요',500,155);}}
+ if(state.phase!=='playing'&&state.phase!=='won'){puff(264,57,472,132,'#faf5ff',27);ctx.fillStyle='#a796bd';ctx.font='bold 10px system-ui';ctx.fillText(state.phase==='paused'?'TAKE A LITTLE BREAK':state.phase==='won'?'ALL STAGES COMPLETE':state.phase==='over'?'LET’S TRY AGAIN':'A LITTLE JUMP, A BIG ADVENTURE',500,86);ctx.fillStyle='#756384';ctx.font='bold 28px system-ui';ctx.fillText(state.phase==='won'?'모든 단계 100% 성공!':state.phase==='over'?'괜찮아, 한 번 더 폴짝!':state.phase==='paused'?'공룡도 잠깐 쉬어요':'준비됐나요, 공룡 친구?',500,123);ctx.fillStyle='#ab9ab5';ctx.font='15px system-ui';ctx.fillText(state.phase==='won'?`${state.score}점! 정말 멋진 모험이었어요!`:state.phase==='over'?`${state.score}점! 아래 버튼으로 다시 도전해요`:state.phase==='paused'?'‘계속 달리기’를 누르면 다시 출발해요':'아래 ‘게임 시작’을 누르고 모험을 떠나요',500,155);}}
 
-let previous=0,accumulator=0;function frame(time){if(!previous)previous=time;const elapsed=Math.min(time-previous,100);previous=time;if(state.phase==='playing'){accumulator+=elapsed;while(accumulator>=1000/60){step();accumulator-=1000/60;}}else accumulator=0;draw();requestAnimationFrame(frame);}
+let previous=0,accumulator=0;function frame(time){if(!previous)previous=time;const elapsed=Math.min(time-previous,100);previous=time;if(state.phase==='playing'){accumulator+=elapsed;while(accumulator>=1000/60){step();accumulator-=1000/60;}}else accumulator=0;if(state.phase==='won'&&!state.partyPaused&&!document.hidden)state.danceTick+=elapsed/(1000/60);draw();requestAnimationFrame(frame);}
 function clickAction(action){return e=>{action();if(e.detail>0)e.currentTarget.blur();};}
 $('#start').onclick=clickAction(start);$('#jump').onclick=clickAction(jump);$('#pause').onclick=clickAction(pause);canvas.onclick=jump;
 $('#duck').addEventListener('pointerdown',e=>{e.preventDefault();$('#duck').setPointerCapture(e.pointerId);duck(true);});for(const event of ['pointerup','pointercancel','lostpointercapture'])$('#duck').addEventListener(event,()=>duck(false));
@@ -126,18 +168,18 @@ function fanfare(){
  for(const [beat,midi] of melody){note(midi,now+beat,beat===2.4?.9:.22,'triangle',.2);note(midi-12,now+beat,.26,'sawtooth',.045);}
  for(const midi of [60,64,67,72])note(midi,now+2.65,.95,'triangle',.09);
 }
-function celebrate(){state.celebration={age:0,particles:[]};state.invincible=Math.max(state.invincible,300);fanfare();notify('대성공! 3단계 100% 완료! 하늘 가득 폭죽으로 축하해요!');}
+function celebrate(){state.y=0;state.vy=0;state.duck=false;hud();state.celebration={age:0,particles:[]};state.invincible=Math.max(state.invincible,300);fanfare();notify('대성공! 3단계 100% 완료! 하늘 가득 폭죽으로 축하해요!');}
 function updateCelebration(){
  const c=state.celebration;if(!c)return;
  if(c.age%27===0&&c.age<180){const x=140+Math.random()*720,y=45+Math.random()*105;const colors=['#f5a7be','#ae94e2','#89d5bf','#f5ce77','#92c9ee','#ffad82'];for(let i=0;i<65;i++){const a=Math.PI*2*i/65,speed=1.2+Math.random()*3.4;c.particles.push({x,y,vx:Math.cos(a)*speed,vy:Math.sin(a)*speed,color:colors[i%colors.length],life:85,size:2+Math.random()*3});}}
  for(const p of c.particles){p.x+=p.vx;p.y+=p.vy;p.vy+=.035;p.vx*=.988;p.life--;}
  c.particles=c.particles.filter(p=>p.life>0);c.age++;
- if(c.age>=270){state.celebration=null;state.phase='won';state.invincible=0;$('#pause').disabled=true;notify('모든 단계 완료! '+state.score+'점! 다시 도전하려면 처음부터 다시를 눌러 주세요.');}
+ if(c.age>=FANFARE_FRAMES){state.celebration=null;state.phase='won';state.invincible=0;state.danceTick=0;state.partyPaused=false;audio.index=0;audio.next=audio.context?.currentTime||0;audio.fxUntil=0;$('#pause').disabled=false;$('#pause').textContent='춤 잠깐 쉬기';notify('모든 단계 완료! '+state.score+'점! 신나는 음악에 맞춰 공룡과 함께 춤춰요!');}
 }
 function drawCelebration(){const c=state.celebration;if(!c)return;
  ctx.save();ctx.fillStyle='#f3ebff25';ctx.fillRect(0,0,1000,360);
  for(const p of c.particles){ctx.globalAlpha=Math.min(1,p.life/24);ctx.fillStyle=p.color;ctx.shadowColor=p.color;ctx.shadowBlur=8;ctx.beginPath();ctx.arc(p.x,p.y,p.size,0,Math.PI*2);ctx.fill();}
- ctx.globalAlpha=1;ctx.shadowBlur=0;puff(260,102,480,113,'#fff3da',25);ctx.textAlign='center';ctx.fillStyle='#b18bc9';ctx.font='bold 12px system-ui';ctx.fillText('H O O R A Y !   A L L   C L E A R',500,132);ctx.fillStyle='#8f6ba7';ctx.font='bold 34px system-ui';ctx.fillText('축하해요! 3단계 완성!',500,173);ctx.font='14px system-ui';ctx.fillStyle='#aa91ac';ctx.fillText('모든 단계를 100% 완성한 최고의 공룡 친구!',500,198);ctx.restore();
+ ctx.globalAlpha=1;ctx.shadowBlur=0;puff(260,102,480,113,'#fff3da',25);ctx.textAlign='center';ctx.fillStyle='#b18bc9';ctx.font='bold 12px system-ui';ctx.fillText('H O O R A Y !   A L L   C L E A R',500,132);ctx.fillStyle='#8f6ba7';ctx.font='bold 34px system-ui';ctx.fillText('축하해요! 3단계 완성!',500,173);ctx.font='14px system-ui';ctx.fillStyle='#aa91ac';ctx.fillText('최고의 공룡 친구! 빵빠레 다음은 신나는 댄스 타임!',500,198);ctx.restore();
 }
 function drawObstacle(o){ctx.save();if(o.hit)ctx.globalAlpha=.35;oval(o.x+o.w/2,GROUND+6,o.w*.65,4,'#7eaa9c22');
  if(o.type==='bird'){const flap=Math.sin(state.tick*.4)*7;puff(o.x+5,o.y+5,36,23,'#c9b3e5',13);puff(o.x-2,o.y+3,21,20,'#d9c6ef',10);puff(o.x+20,o.y+11+flap,21,11,'#b59bd6',7);puff(o.x-9,o.y+14,12,7,'#f4c9a0',4);oval(o.x+5,o.y+10,2.5,3,'#6d5c83');}
