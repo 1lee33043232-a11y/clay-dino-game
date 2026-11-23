@@ -5,4 +5,5 @@
 !README.md
 !package.json
 !vercel.json
+!.vercelignore
 !check-progress.mjs
