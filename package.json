@@ -1,0 +1,9 @@
+{
+  "name": "clay-dino-game",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A standalone clay-style dinosaur game with three stages.",
+  "scripts": {
+    "test": "node check-progress.mjs"
+  }
+}

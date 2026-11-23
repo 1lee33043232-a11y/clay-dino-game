@@ -1,0 +1,8 @@
+# The game is a standalone HTML file. Keep local design and browser scratch files private.
+*
+!.gitignore
+!index.html
+!README.md
+!package.json
+!vercel.json
+!check-progress.mjs
